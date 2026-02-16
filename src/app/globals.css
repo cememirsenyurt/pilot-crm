@@ -1,0 +1,51 @@
+@import "tailwindcss";
+
+/* ── CopilotKit overrides ──────────────────────────────────── */
+
+.copilotKitBadge,
+[class*="powered-by"],
+[class*="badge"],
+[class*="PoweredBy"],
+[class*="copilotkit-badge"] {
+  display: none !important;
+}
+
+/* ── Scrollbar ─────────────────────────────────────────────── */
+
+.scroll-thin::-webkit-scrollbar {
+  height: 6px;
+  width: 6px;
+}
+.scroll-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 3px;
+}
+.scroll-thin::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
+}
+
+/* ── Pulse ring for floating call button ───────────────────── */
+
+@keyframes pulse-ring {
+  0% {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+  100% {
+    transform: scale(1.8);
+    opacity: 0;
+  }
+}
+
+.call-pulse::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: #e85d04;
+  animation: pulse-ring 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  z-index: -1;
+}
