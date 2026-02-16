@@ -56,8 +56,10 @@ export function CallModal({
   const [analyzing, setAnalyzing] = useState(false);
   const [sentiment, setSentiment] = useState<SentimentResult | null>(null);
   const [muted, setMuted] = useState(false);
+  const [callError, setCallError] = useState<string | null>(null);
 
-  const vapiRef = useRef<ReturnType<typeof createVapi> | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const vapiRef = useRef<any>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -65,24 +67,23 @@ export function CallModal({
   const lastCalls = account ? getCallsByAccount(account.id).slice(-1) : [];
   const lastSentiment = lastCalls[0]?.sentiment;
 
-  /* ── Vapi lazy import (browser only) ─────────────────────── */
-
-  function createVapi(key: string) {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const Vapi = require("@vapi-ai/web").default;
-    return new Vapi(key);
-  }
-
   /* ── Start call ──────────────────────────────────────────── */
 
   const startCall = useCallback(async () => {
     const pubKey = process.env.NEXT_PUBLIC_VAPI_PUBLIC_KEY;
     const assistId = process.env.NEXT_PUBLIC_VAPI_ASSISTANT_ID;
 
-    if (!pubKey || !assistId || !account) return;
+    if (!pubKey || !account) {
+      setCallError("Missing Vapi configuration. Check environment variables.");
+      return;
+    }
+
+    setCallError(null);
 
     try {
-      const vapi = createVapi(pubKey);
+      const VapiModule = await import("@vapi-ai/web");
+      const Vapi = VapiModule.default;
+      const vapi = new Vapi(pubKey);
       vapiRef.current = vapi;
 
       vapi.on("message", (msg: Record<string, unknown>) => {
@@ -102,12 +103,70 @@ export function CallModal({
         if (timerRef.current) clearInterval(timerRef.current);
       });
 
-      await vapi.start(assistId);
+      vapi.on("error", (err: unknown) => {
+        console.error("Vapi error:", err);
+        setCallError("Call error occurred. Please try again.");
+      });
+
+      /* Build assistant overrides with account context.
+         The Vapi assistant acts as Alex (the sales rep).
+         The human user role-plays as the customer. */
+      const overrides = {
+        firstMessage: `Hi ${account.contactName}, this is Alex from PilotCRM. Thanks for taking my call today. How have you been?`,
+        model: {
+          provider: "anthropic" as const,
+          model: "claude-sonnet-4-20250514" as const,
+          messages: [
+            {
+              role: "system" as const,
+              content: [
+                `You are Alex, a senior account manager at PilotCRM, a B2B SaaS company that sells developer tools and platform solutions.`,
+                `You are on a sales call with ${account.contactName}, who is the ${account.contactRole} at ${account.company}.`,
+                ``,
+                `ACCOUNT CONTEXT:`,
+                `- Company: ${account.company}`,
+                `- Industry: ${account.industry}`,
+                `- Current Plan: ${account.plan}`,
+                `- Deal Value: $${account.dealValue.toLocaleString()}`,
+                `- Pipeline Stage: ${account.stage.replace("_", " ")}`,
+                `- Close Likelihood: ${account.likelihood}%`,
+                `- Tags: ${account.tags.join(", ") || "none"}`,
+                `- Recent Notes: ${account.notes.slice(-3).join(" | ") || "No notes yet"}`,
+                ``,
+                `YOUR OBJECTIVES FOR THIS CALL:`,
+                `1. Build rapport — ask how they're doing, reference past conversations if notes exist`,
+                `2. Understand current needs — ask open-ended questions about their challenges`,
+                `3. Address concerns — if they mention pricing, compliance, timeline, or competition, handle it confidently`,
+                `4. Advance the deal — suggest concrete next steps (demo, proposal review, technical deep-dive, contract)`,
+                `5. Gather intel — learn about decision makers, budget timeline, competing solutions`,
+                ``,
+                `BEHAVIOR RULES:`,
+                `- Be professional, warm, and conversational — not robotic`,
+                `- Keep responses concise (2-3 sentences typically)`,
+                `- Listen carefully and respond to what they actually say`,
+                `- Ask one question at a time, don't overwhelm`,
+                `- If they seem ready to end the call, summarize next steps and thank them`,
+                `- Never make up facts about PilotCRM's product — stay general if unsure`,
+              ].join("\n"),
+            },
+          ],
+        },
+      };
+
+      if (assistId) {
+        await vapi.start(assistId, overrides);
+      } else {
+        await vapi.start(overrides);
+      }
+
       setCallState("active");
       setElapsed(0);
       timerRef.current = setInterval(() => setElapsed((e) => e + 1), 1000);
     } catch (err) {
       console.error("Vapi start failed:", err);
+      setCallError(
+        `Failed to start call: ${err instanceof Error ? err.message : "Unknown error"}. Check browser microphone permissions.`,
+      );
     }
   }, [account]);
 
@@ -117,6 +176,19 @@ export function CallModal({
     vapiRef.current?.stop?.();
     if (timerRef.current) clearInterval(timerRef.current);
     setCallState("post-call");
+  };
+
+  /* ── Toggle mute ─────────────────────────────────────────── */
+
+  const toggleMute = () => {
+    if (vapiRef.current) {
+      if (muted) {
+        vapiRef.current.setMuted?.(false);
+      } else {
+        vapiRef.current.setMuted?.(true);
+      }
+    }
+    setMuted(!muted);
   };
 
   /* ── Analyze sentiment on post-call ──────────────────────── */
@@ -134,7 +206,7 @@ export function CallModal({
     const full = transcript
       .map(
         (m) =>
-          `${m.role === "assistant" ? "Agent" : account?.contactName ?? "Customer"}: ${m.text}`,
+          `${m.role === "assistant" ? "Alex (Sales Rep)" : account?.contactName ?? "Customer"}: ${m.text}`,
       )
       .join("\n");
 
@@ -163,7 +235,7 @@ export function CallModal({
     const full = transcript
       .map(
         (m) =>
-          `${m.role === "assistant" ? "Agent" : account.contactName}: ${m.text}`,
+          `${m.role === "assistant" ? "Alex (Sales Rep)" : account.contactName}: ${m.text}`,
       )
       .join("\n");
 
@@ -342,6 +414,25 @@ export function CallModal({
                     </p>
                   </div>
                 )}
+
+                <div className="rounded-lg border border-orange-100 bg-orange-50 p-3">
+                  <p className="text-xs font-medium text-orange-600">
+                    How This Works
+                  </p>
+                  <p className="text-sm text-orange-800">
+                    The AI will play as <strong>Alex</strong> (you, the sales
+                    rep). You speak as{" "}
+                    <strong>{account.contactName}</strong> from{" "}
+                    {account.company}. Have a natural sales conversation!
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {callError && (
+              <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3">
+                <p className="text-xs font-medium text-red-600">Error</p>
+                <p className="text-sm text-red-700">{callError}</p>
               </div>
             )}
 
@@ -381,7 +472,9 @@ export function CallModal({
                     }`}
                   >
                     <p className="mb-0.5 text-[10px] font-semibold uppercase text-gray-400">
-                      {msg.role === "assistant" ? "🤖 Agent" : "👤 Customer"}
+                      {msg.role === "assistant"
+                        ? "🤖 Alex (AI Rep)"
+                        : `👤 ${account?.contactName ?? "Customer"}`}
                     </p>
                     {msg.text}
                   </div>
@@ -392,7 +485,7 @@ export function CallModal({
             {/* Call controls */}
             <div className="flex items-center justify-center gap-4 border-t border-gray-100 px-6 py-4">
               <button
-                onClick={() => setMuted(!muted)}
+                onClick={toggleMute}
                 className={`rounded-full p-3 transition-colors ${muted ? "bg-red-100 text-red-600" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
               >
                 {muted ? (
@@ -460,13 +553,25 @@ export function CallModal({
                 </div>
 
                 {sentiment.painPoints.length > 0 && (
-                  <Section title="🔴 Pain Points" items={sentiment.painPoints} color="red" />
+                  <Section
+                    title="🔴 Pain Points"
+                    items={sentiment.painPoints}
+                    color="red"
+                  />
                 )}
                 {sentiment.positiveSignals.length > 0 && (
-                  <Section title="🟢 Positive Signals" items={sentiment.positiveSignals} color="green" />
+                  <Section
+                    title="🟢 Positive Signals"
+                    items={sentiment.positiveSignals}
+                    color="green"
+                  />
                 )}
                 {sentiment.nextSteps.length > 0 && (
-                  <Section title="📋 Next Steps" items={sentiment.nextSteps} color="blue" />
+                  <Section
+                    title="📋 Next Steps"
+                    items={sentiment.nextSteps}
+                    color="blue"
+                  />
                 )}
 
                 <div className="flex gap-3 pt-2">

@@ -715,6 +715,47 @@ export function addActivity(activity: Omit<Activity, "id">): Activity {
   return newActivity;
 }
 
+/** Create a brand-new account from an inbound lead (phone call) */
+export function createAccount(data: {
+  company: string;
+  contactName: string;
+  contactEmail: string;
+  contactRole: string;
+  industry: string;
+  dealValue: number;
+  notes: string[];
+}): Account {
+  const newAccount: Account = {
+    id: uid(),
+    company: data.company,
+    contactName: data.contactName,
+    contactEmail: data.contactEmail,
+    contactRole: data.contactRole,
+    plan: "free",
+    stage: "lead",
+    dealValue: data.dealValue,
+    likelihood: 25,
+    industry: data.industry,
+    notes: data.notes,
+    lastContactDate: new Date().toISOString(),
+    nextFollowUp: new Date(Date.now() + 3 * 86_400_000)
+      .toISOString()
+      .split("T")[0],
+    tags: ["inbound"],
+  };
+  accounts.push(newAccount);
+
+  activities.push({
+    id: uid(),
+    accountId: newAccount.id,
+    type: "note",
+    message: `New inbound lead: ${data.company} — ${data.contactName} (${data.contactRole})`,
+    timestamp: new Date().toISOString(),
+  });
+
+  return newAccount;
+}
+
 // ── Formatting ──────────────────────────────────────────────
 
 function formatStage(stage: Stage): string {
