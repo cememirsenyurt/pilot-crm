@@ -5,7 +5,6 @@ const navItems = [
   { key: "accounts", icon: "👥", label: "Accounts" },
   { key: "calls", icon: "📞", label: "Calls" },
   { key: "calendar", icon: "📅", label: "Calendar" },
-  { key: "settings", icon: "⚙️", label: "Settings" },
 ];
 
 interface AppSidebarProps {

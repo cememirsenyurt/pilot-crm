@@ -769,3 +769,9 @@ function formatStage(stage: Stage): string {
   };
   return labels[stage] ?? stage;
 }
+
+// ── Seed data exports (for server-side store.ts) ────────────
+
+export { accounts as SEED_ACCOUNTS };
+export { callRecords as SEED_CALL_RECORDS };
+export { activities as SEED_ACTIVITIES };

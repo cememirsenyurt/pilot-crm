@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { useCopilotReadable, useCopilotAction } from "@copilotkit/react-core";
 import {
   Bell,
@@ -13,34 +13,25 @@ import { AppSidebar } from "@/components/AppSidebar";
 import { DashboardView } from "@/components/DashboardView";
 import { AccountsView } from "@/components/AccountsView";
 import { CallsView } from "@/components/CallsView";
+import { CalendarView } from "@/components/CalendarView";
 import { CallModal } from "@/components/CallModal";
-import {
-  getAccounts,
-  getPipelineStats,
-  getRecentActivities,
-  getAllCalls,
-  getCallsByAccount,
-  getActivitiesByAccount,
-  getAccountByCompany,
-  updateAccountStage,
-  updateAccountLikelihood,
-  addNoteToAccount,
-  addCallRecord,
-  type Account,
-  type Stage,
-  type CallRecord,
+import type {
+  Account,
+  CallRecord,
+  Activity,
+  PipelineStats,
+  Stage,
 } from "@/lib/data";
 
 /* ── Types ─────────────────────────────────────────────────── */
 
-type Page = "dashboard" | "accounts" | "calls" | "calendar" | "settings";
+type Page = "dashboard" | "accounts" | "calls" | "calendar";
 
 const pageTitles: Record<Page, string> = {
   dashboard: "Dashboard",
   accounts: "Accounts",
   calls: "Call History",
   calendar: "Calendar",
-  settings: "Settings",
 };
 
 const stageLabels: Record<string, string> = {
@@ -58,7 +49,11 @@ const stageLabels: Record<string, string> = {
 
 export default function App() {
   const [activePage, setActivePage] = useState<Page>("dashboard");
-  const [accounts, setAccounts] = useState<Account[]>(() => getAccounts());
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [calls, setCalls] = useState<CallRecord[]>([]);
+  const [activities, setActivities] = useState<Activity[]>([]);
+  const [stats, setStats] = useState<PipelineStats | null>(null);
+  const [loading, setLoading] = useState(true);
   const [showCallModal, setShowCallModal] = useState(false);
   const [callModalAccountId, setCallModalAccountId] = useState<string | null>(
     null,
@@ -66,11 +61,42 @@ export default function App() {
   const [showNotifications, setShowNotifications] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
 
-  const refreshAccounts = () => setAccounts([...getAccounts()]);
+  /* ── Fetch data from server ────────────────────────────────── */
 
-  const stats = getPipelineStats();
-  const calls = getAllCalls();
-  const recentActivities = getRecentActivities(15);
+  const refreshData = useCallback(async () => {
+    try {
+      const res = await fetch("/api/crm");
+      const data = await res.json();
+      setAccounts(data.accounts ?? []);
+      setCalls(data.calls ?? []);
+      setActivities(data.activities ?? []);
+      setStats(data.stats ?? null);
+    } catch (err) {
+      console.error("Failed to fetch CRM data:", err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshData();
+  }, [refreshData]);
+
+  /* ── Server mutation helper ────────────────────────────────── */
+
+  const mutate = useCallback(
+    async (action: string, params: Record<string, unknown> = {}) => {
+      const res = await fetch("/api/crm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, ...params }),
+      });
+      const result = await res.json();
+      await refreshData();
+      return result;
+    },
+    [refreshData],
+  );
 
   /* ── Notifications ───────────────────────────────────────── */
 
@@ -144,7 +170,7 @@ export default function App() {
   useCopilotReadable({
     description:
       "Recent CRM activities (calls, emails, notes, stage_changes, meetings) across all accounts with timestamps.",
-    value: JSON.stringify(recentActivities),
+    value: JSON.stringify(activities),
   });
 
   useCopilotReadable({
@@ -172,11 +198,17 @@ export default function App() {
       {
         name: "newStage",
         type: "string",
-        description: "Target stage (lead/discovery/proposal/negotiation/closed_won/closed_lost)",
+        description:
+          "Target stage (lead/discovery/proposal/negotiation/closed_won/closed_lost)",
       },
     ],
     renderAndWait: ({ args, handler }) => {
-      const acct = getAccountByCompany(args.companyName as string);
+      const name = String(args.companyName ?? "").toLowerCase();
+      const acct = accounts.find(
+        (a) =>
+          a.company.toLowerCase() === name ||
+          a.company.toLowerCase().includes(name),
+      );
       if (!acct) {
         return (
           <RenderCard variant="error">
@@ -208,9 +240,11 @@ export default function App() {
             </p>
             <div className="mt-3 flex gap-2">
               <button
-                onClick={() => {
-                  updateAccountStage(acct.id, "closed_won");
-                  refreshAccounts();
+                onClick={async () => {
+                  await mutate("moveStage", {
+                    accountId: acct.id,
+                    stage: "closed_won",
+                  });
                   handler?.(
                     `✅ Approved! ${acct.company} marked as Closed Won.`,
                   );
@@ -221,7 +255,9 @@ export default function App() {
               </button>
               <button
                 onClick={() =>
-                  handler?.(`❌ Declined. ${acct.company} stays in ${acct.stage}.`)
+                  handler?.(
+                    `❌ Declined. ${acct.company} stays in ${acct.stage}.`,
+                  )
                 }
                 className="flex-1 rounded-lg bg-gray-100 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-200 transition-colors"
               >
@@ -238,9 +274,11 @@ export default function App() {
           account={acct}
           stage={stage}
           handler={handler!}
-          onExecute={() => {
-            updateAccountStage(acct.id, stage as Stage);
-            refreshAccounts();
+          onExecute={async () => {
+            await mutate("moveStage", {
+              accountId: acct.id,
+              stage: stage as Stage,
+            });
           }}
         />
       );
@@ -267,11 +305,8 @@ export default function App() {
       companyName: string;
       note: string;
     }) => {
-      const acct = getAccountByCompany(companyName);
-      if (!acct) return `Account "${companyName}" not found.`;
-      addNoteToAccount(acct.id, note);
-      refreshAccounts();
-      return `📝 Note added to ${acct.company}.`;
+      const result = await mutate("addNote", { companyName, note });
+      return result.message || `📝 Note added.`;
     },
     render: ({ status, args, result }) => {
       if (status === "inProgress")
@@ -307,13 +342,12 @@ export default function App() {
       },
     ],
     handler: async ({ companyName }: { companyName: string }) => {
-      const acct = getAccountByCompany(companyName);
-      if (!acct) return { error: true, msg: `"${companyName}" not found.` };
-      return {
-        account: acct,
-        calls: getCallsByAccount(acct.id),
-        activities: getActivitiesByAccount(acct.id).slice(0, 6),
-      };
+      const res = await fetch("/api/crm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "getAccountBrief", companyName }),
+      });
+      return await res.json();
     },
     render: ({ status, result }) => {
       if (status === "inProgress")
@@ -372,7 +406,9 @@ export default function App() {
               • Review current {stageLabels[a.stage].toLowerCase()} status and
               timeline
             </p>
-            {a.likelihood < 50 && <p>• Address potential blockers or concerns</p>}
+            {a.likelihood < 50 && (
+              <p>• Address potential blockers or concerns</p>
+            )}
             {a.tags.includes("at-risk") && (
               <p>• Discuss engagement level and re-establish value prop</p>
             )}
@@ -407,12 +443,10 @@ export default function App() {
       companyName: string;
       newLikelihood: number;
     }) => {
-      const acct = getAccountByCompany(companyName);
-      if (!acct) return { error: true };
-      const old = acct.likelihood;
-      updateAccountLikelihood(acct.id, newLikelihood);
-      refreshAccounts();
-      return { company: acct.company, old, now: newLikelihood };
+      return await mutate("updateLikelihood", {
+        companyName,
+        likelihood: newLikelihood,
+      });
     },
     render: ({ status, result }) => {
       if (status === "inProgress")
@@ -469,12 +503,7 @@ export default function App() {
       companyName: string;
       reason: string;
     }) => {
-      const acct = getAccountByCompany(companyName);
-      if (!acct) return { error: true };
-      if (!acct.tags.includes("at-risk")) acct.tags.push("at-risk");
-      addNoteToAccount(acct.id, `⚠️ AT-RISK: ${reason}`);
-      refreshAccounts();
-      return { company: acct.company, reason };
+      return await mutate("flagRisk", { companyName, reason });
     },
     render: ({ status, result }) => {
       if (status === "inProgress")
@@ -573,17 +602,43 @@ export default function App() {
     setShowCallModal(true);
   };
 
-  const handleCallComplete = (
+  const handleCallComplete = async (
     accountId: string,
     record: Omit<CallRecord, "id">,
   ) => {
-    addCallRecord(accountId, record);
-    refreshAccounts();
+    await mutate("addCall", {
+      accountId,
+      date: record.date,
+      duration: record.duration,
+      transcript: record.transcript,
+      sentiment: record.sentiment
+        ? {
+            ...record.sentiment,
+            likelihoodToClose: record.sentiment.satisfaction
+              ? record.sentiment.satisfaction * 10
+              : undefined,
+          }
+        : null,
+      outcome: record.outcome,
+    });
   };
 
   /* ═══════════════════════════════════════════════════════════
      Render
      ═══════════════════════════════════════════════════════════ */
+
+  if (loading) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-[#F5F5F7]">
+        <div className="text-center">
+          <div className="mx-auto h-10 w-10 animate-spin rounded-full border-4 border-gray-200 border-t-[#E85D04]" />
+          <p className="mt-4 text-sm font-medium text-gray-500">
+            Loading PilotCRM...
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen bg-[#F5F5F7]">
@@ -651,11 +706,11 @@ export default function App() {
 
         {/* ── Content ─────────────────────────────────────────── */}
         <main className="flex-1 overflow-y-auto scroll-thin p-6 lg:p-8">
-          {activePage === "dashboard" && (
+          {activePage === "dashboard" && stats && (
             <DashboardView
               accounts={accounts}
               stats={stats}
-              activities={recentActivities}
+              activities={activities}
               calls={calls}
               onCall={openCallModal}
             />
@@ -666,16 +721,12 @@ export default function App() {
           {activePage === "calls" && (
             <CallsView calls={calls} accounts={accounts} />
           )}
-          {(activePage === "calendar" || activePage === "settings") && (
-            <div className="flex h-96 items-center justify-center rounded-xl border border-gray-200 bg-white">
-              <div className="text-center">
-                <p className="text-5xl">🚧</p>
-                <p className="mt-4 text-lg font-semibold text-gray-900">
-                  {pageTitles[activePage]}
-                </p>
-                <p className="mt-1 text-sm text-gray-500">Coming soon</p>
-              </div>
-            </div>
+          {activePage === "calendar" && (
+            <CalendarView
+              accounts={accounts}
+              calls={calls}
+              onCall={openCallModal}
+            />
           )}
         </main>
 
@@ -692,6 +743,7 @@ export default function App() {
       {showCallModal && (
         <CallModal
           accounts={accounts}
+          calls={calls}
           selectedAccountId={callModalAccountId}
           onClose={() => setShowCallModal(false)}
           onCallComplete={handleCallComplete}
@@ -746,7 +798,6 @@ function BriefSection({
 
 /* ═══════════════════════════════════════════════════════════════
    Visualization components — rendered by createVisualization
-   The LLM generates the data; these just render it.
    ═══════════════════════════════════════════════════════════════ */
 
 interface VizItem {
@@ -842,7 +893,10 @@ function ComparisonViz({ title, items }: VizProps) {
           <div
             key={i}
             className="rounded-lg border border-gray-200 bg-white p-2.5 text-center"
-            style={{ borderTopColor: item.color || "#6B7280", borderTopWidth: 3 }}
+            style={{
+              borderTopColor: item.color || "#6B7280",
+              borderTopWidth: 3,
+            }}
           >
             <p className="text-xs font-bold text-gray-900">{item.label}</p>
             <p
@@ -869,7 +923,9 @@ function ScorecardViz({ title, items }: VizProps) {
           <div
             key={i}
             className="rounded-lg p-3 text-center"
-            style={{ backgroundColor: `${item.color || "#6B7280"}18` }}
+            style={{
+              backgroundColor: `${item.color || "#6B7280"}18`,
+            }}
           >
             <p
               className="text-xl font-bold"
@@ -900,7 +956,10 @@ function ProgressViz({ title, items }: VizProps) {
             <div key={i}>
               <div className="mb-1 flex justify-between text-[11px]">
                 <span className="font-medium text-gray-700">{item.label}</span>
-                <span className="font-bold" style={{ color: item.color || "#374151" }}>
+                <span
+                  className="font-bold"
+                  style={{ color: item.color || "#374151" }}
+                >
                   {item.subtitle || `${pct}%`}
                 </span>
               </div>
@@ -932,16 +991,17 @@ function AutoMoveCard({
   account: Account;
   stage: string;
   handler: (msg: string) => void;
-  onExecute: () => void;
+  onExecute: () => Promise<void>;
 }) {
   const executed = useRef(false);
   useEffect(() => {
     if (!executed.current) {
       executed.current = true;
-      onExecute();
-      handler(
-        `✅ Moved ${account.company} to ${stageLabels[stage] ?? stage}.`,
-      );
+      onExecute().then(() => {
+        handler(
+          `✅ Moved ${account.company} to ${stageLabels[stage] ?? stage}.`,
+        );
+      });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

@@ -3,7 +3,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Phone, X, Mic, MicOff, Clock } from "lucide-react";
 import type { Account, CallRecord } from "@/lib/data";
-import { getCallsByAccount } from "@/lib/data";
 
 /* ── Types ─────────────────────────────────────────────────── */
 
@@ -34,6 +33,7 @@ interface SentimentResult {
 
 interface CallModalProps {
   accounts: Account[];
+  calls: CallRecord[];
   selectedAccountId: string | null;
   onClose: () => void;
   onCallComplete: (accountId: string, record: Omit<CallRecord, "id">) => void;
@@ -43,6 +43,7 @@ interface CallModalProps {
 
 export function CallModal({
   accounts,
+  calls: allCalls,
   selectedAccountId,
   onClose,
   onCallComplete,
@@ -64,7 +65,9 @@ export function CallModal({
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const account = accounts.find((a) => a.id === accountId);
-  const lastCalls = account ? getCallsByAccount(account.id).slice(-1) : [];
+  const lastCalls = account
+    ? allCalls.filter((c) => c.accountId === account.id).slice(-1)
+    : [];
   const lastSentiment = lastCalls[0]?.sentiment;
 
   /* ── Start call ──────────────────────────────────────────── */

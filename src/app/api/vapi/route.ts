@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { NextRequest, NextResponse } from "next/server";
-import { addCallRecord, createAccount, getAccounts } from "@/lib/data";
+import { addCallRecord, createAccount, getAccounts } from "@/lib/store";
 
 /**
  * Vapi webhook handler — receives events from Vapi for inbound phone calls.
