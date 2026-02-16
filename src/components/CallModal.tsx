@@ -261,7 +261,16 @@ export function CallModal({
           }
         : null,
       outcome: sentiment?.summary ?? "Call completed",
-    });
+      _analysis: sentiment
+        ? {
+            likelihoodToClose: sentiment.likelihoodToClose,
+            overallSentiment: sentiment.overallSentiment,
+            painPoints: sentiment.painPoints,
+            positiveSignals: sentiment.positiveSignals,
+            nextSteps: sentiment.nextSteps,
+          }
+        : null,
+    } as Omit<CallRecord, "id"> & { _analysis?: Record<string, unknown> });
 
     onClose();
   };

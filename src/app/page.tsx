@@ -604,22 +604,16 @@ export default function App() {
 
   const handleCallComplete = async (
     accountId: string,
-    record: Omit<CallRecord, "id">,
+    record: Omit<CallRecord, "id"> & { _analysis?: Record<string, unknown> },
   ) => {
     await mutate("addCall", {
       accountId,
       date: record.date,
       duration: record.duration,
       transcript: record.transcript,
-      sentiment: record.sentiment
-        ? {
-            ...record.sentiment,
-            likelihoodToClose: record.sentiment.satisfaction
-              ? record.sentiment.satisfaction * 10
-              : undefined,
-          }
-        : null,
+      sentiment: record.sentiment,
       outcome: record.outcome,
+      analysis: record._analysis ?? null,
     });
   };
 

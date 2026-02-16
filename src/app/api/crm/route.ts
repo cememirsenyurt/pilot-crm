@@ -122,15 +122,60 @@ export async function POST(req: NextRequest) {
           outcome: body.outcome ?? "Call completed",
         });
 
-        /* If sentiment includes likelihoodToClose, update the account */
-        if (body.sentiment?.likelihoodToClose) {
-          const acct = getAccount(body.accountId);
-          if (acct) {
-            updateAccountLikelihood(
+        const acct = getAccount(body.accountId);
+        const analysis = body.analysis;
+        const sentimentScore = analysis?.overallSentiment ?? body.sentiment?.score ?? null;
+        const likelihoodFromCall = analysis?.likelihoodToClose ?? null;
+
+        if (acct && acct.stage !== "closed_won" && acct.stage !== "closed_lost") {
+          /* ── Update likelihood based on call analysis ──────── */
+          if (typeof likelihoodFromCall === "number") {
+            /* Weight the call analysis heavily — 70% new, 30% old */
+            const newLikelihood = Math.round(
+              acct.likelihood * 0.3 + likelihoodFromCall * 0.7,
+            );
+            updateAccountLikelihood(acct.id, newLikelihood);
+          }
+
+          /* ── Auto-adjust pipeline stage based on sentiment ── */
+          const stageOrder: Stage[] = [
+            "lead",
+            "discovery",
+            "proposal",
+            "negotiation",
+          ];
+          const currentIdx = stageOrder.indexOf(acct.stage as Stage);
+
+          if (typeof sentimentScore === "number" && currentIdx >= 0) {
+            /* Bad call (sentiment < 4): move back one stage */
+            if (sentimentScore <= 3 && currentIdx > 0) {
+              const newStage = stageOrder[currentIdx - 1];
+              updateAccountStage(acct.id, newStage);
+            }
+            /* Very bad call (sentiment < 3): also flag as at-risk */
+            if (sentimentScore <= 3) {
+              flagAccountRisk(
+                acct.id,
+                `Negative call — sentiment ${sentimentScore}/10: ${body.outcome ?? "poor engagement"}`,
+              );
+            }
+            /* Great call (sentiment >= 8): advance one stage */
+            if (sentimentScore >= 8 && currentIdx < stageOrder.length - 1) {
+              const newStage = stageOrder[currentIdx + 1];
+              updateAccountStage(acct.id, newStage);
+            }
+          }
+
+          /* If likelihood dropped below 30, flag at-risk */
+          const refreshedAcct = getAccount(body.accountId);
+          if (
+            refreshedAcct &&
+            refreshedAcct.likelihood < 30 &&
+            !refreshedAcct.tags.includes("at-risk")
+          ) {
+            flagAccountRisk(
               acct.id,
-              Math.round(
-                (acct.likelihood + body.sentiment.likelihoodToClose) / 2,
-              ),
+              `Likelihood dropped to ${refreshedAcct.likelihood}% after call`,
             );
           }
         }
