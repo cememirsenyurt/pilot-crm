@@ -157,26 +157,26 @@ export default function App() {
 
   useCopilotReadable({
     description:
-      "All CRM accounts. Fields: id, company, contactName, contactRole, contactEmail, plan (free/team/enterprise), stage (lead/discovery/proposal/negotiation/closed_won/closed_lost), dealValue ($), likelihood (0-100%), industry, notes[], tags[], lastContactDate, nextFollowUp.",
-    value: JSON.stringify(accounts),
+      "The CRM accounts in the pipeline. Each account has: id, company, contactName, contactRole, contactEmail, plan (free/team/enterprise), stage (lead/discovery/proposal/negotiation/closed_won/closed_lost), dealValue (in dollars), likelihood (0-100%), industry, notes (array of strings), tags (array of strings), lastContactDate, and nextFollowUp. Use this data to answer questions about any account, compare deals, check pipeline health, identify risks, and more.",
+    value: accounts,
   });
 
   useCopilotReadable({
     description:
-      "Pipeline statistics: totalPipelineValue, weightedPipelineValue, averageDealSize, averageLikelihood, totalAccounts, activeDeals, countByStage, valueByStage.",
-    value: JSON.stringify(stats),
+      "Pipeline statistics computed from all accounts: totalPipelineValue, weightedPipelineValue, averageDealSize, averageLikelihood, totalAccounts, activeDeals, countByStage (object mapping each stage to its count), and valueByStage (object mapping each stage to total dollar value).",
+    value: stats,
   });
 
   useCopilotReadable({
     description:
-      "Recent CRM activities (calls, emails, notes, stage_changes, meetings) across all accounts with timestamps.",
-    value: JSON.stringify(activities),
+      "Recent activities across all accounts, ordered newest first. Each has: id, accountId, type (call/email/note/stage_change/meeting), message (human-readable), and timestamp.",
+    value: activities,
   });
 
   useCopilotReadable({
     description:
-      "All call records with transcripts, duration, sentiment scores (1-10), satisfaction scores, outcome summaries, and sentiment tags.",
-    value: JSON.stringify(calls),
+      "All call records. Each has: id, accountId, date, duration (seconds), transcript (full text), sentiment (object with score 1-10, satisfaction 1-10, summary, tags), and outcome (string). Use this to answer questions about call history, sentiment trends, and customer interactions.",
+    value: calls,
   });
 
   /* ═══════════════════════════════════════════════════════════
@@ -188,18 +188,20 @@ export default function App() {
   useCopilotAction({
     name: "moveAccountToStage",
     description:
-      "Move a deal to a new pipeline stage. For closed_won, shows an approval card. Valid stages: lead, discovery, proposal, negotiation, closed_won, closed_lost.",
+      "Move a deal to a different pipeline stage. Use when the user asks to move, advance, or regress a deal. For closed_won requires user approval.",
     parameters: [
       {
         name: "companyName",
         type: "string",
-        description: "Company name (partial match OK)",
+        description: "The company name to move (partial match is fine)",
+        required: true,
       },
       {
         name: "newStage",
         type: "string",
         description:
-          "Target stage (lead/discovery/proposal/negotiation/closed_won/closed_lost)",
+          "The target stage. MUST be one of: lead, discovery, proposal, negotiation, closed_won, closed_lost",
+        required: true,
       },
     ],
     renderAndWait: ({ args, handler }) => {
@@ -223,7 +225,30 @@ export default function App() {
         );
       }
 
-      const stage = String(args.newStage);
+      const validStages: Stage[] = [
+        "lead",
+        "discovery",
+        "proposal",
+        "negotiation",
+        "closed_won",
+        "closed_lost",
+      ];
+      const rawStage = String(args.newStage ?? "").toLowerCase().replace(/\s+/g, "_");
+      const stage = validStages.find((s) => s === rawStage) ?? null;
+
+      if (!stage) {
+        return (
+          <RenderCard variant="error">
+            Invalid stage &quot;{String(args.newStage)}&quot;. Valid stages: Lead, Discovery, Proposal, Negotiation, Closed Won, Closed Lost.
+            <button
+              onClick={() => handler?.(`Invalid stage "${args.newStage}".`)}
+              className="mt-2 w-full rounded-lg bg-gray-100 py-1.5 text-xs font-medium"
+            >
+              Dismiss
+            </button>
+          </RenderCard>
+        );
+      }
 
       if (stage === "closed_won") {
         return (
@@ -256,7 +281,7 @@ export default function App() {
               <button
                 onClick={() =>
                   handler?.(
-                    `❌ Declined. ${acct.company} stays in ${acct.stage}.`,
+                    `❌ Declined. ${acct.company} stays in ${stageLabels[acct.stage] ?? acct.stage}.`,
                   )
                 }
                 className="flex-1 rounded-lg bg-gray-100 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-200 transition-colors"
@@ -277,7 +302,7 @@ export default function App() {
           onExecute={async () => {
             await mutate("moveStage", {
               accountId: acct.id,
-              stage: stage as Stage,
+              stage,
             });
           }}
         />
@@ -289,14 +314,21 @@ export default function App() {
 
   useCopilotAction({
     name: "addNote",
-    description: "Add a note or observation to an account.",
+    description:
+      "Add a note to a CRM account. Use when the user says to note something, log an observation, or record information about a company.",
     parameters: [
       {
         name: "companyName",
         type: "string",
-        description: "Company name",
+        description: "The company name to add the note to",
+        required: true,
       },
-      { name: "note", type: "string", description: "The note text" },
+      {
+        name: "note",
+        type: "string",
+        description: "The note content to add",
+        required: true,
+      },
     ],
     handler: async ({
       companyName,
@@ -333,12 +365,13 @@ export default function App() {
   useCopilotAction({
     name: "getAccountBrief",
     description:
-      "Generate a full meeting-prep briefing for an account. Shows overview, sentiment history, recent activity, notes, and suggested talking points.",
+      "Get a detailed meeting prep briefing for an account. Renders a rich card with company overview, contact info, sentiment history, notes, and suggested talking points. Use when the user asks for details about a company, meeting prep, or account summary.",
     parameters: [
       {
         name: "companyName",
         type: "string",
-        description: "Company name",
+        description: "The company name to get a briefing for",
+        required: true,
       },
     ],
     handler: async ({ companyName }: { companyName: string }) => {
@@ -423,17 +456,20 @@ export default function App() {
 
   useCopilotAction({
     name: "updateLikelihood",
-    description: "Update the close probability for a deal (0-100).",
+    description:
+      "Update the close likelihood percentage for a deal (0-100). Use when the user asks to change, set, increase, or decrease a deal's probability.",
     parameters: [
       {
         name: "companyName",
         type: "string",
-        description: "Company name",
+        description: "The company name whose likelihood to update",
+        required: true,
       },
       {
         name: "newLikelihood",
         type: "number",
-        description: "New likelihood 0-100",
+        description: "The new likelihood percentage (0-100)",
+        required: true,
       },
     ],
     handler: async ({
@@ -483,17 +519,19 @@ export default function App() {
   useCopilotAction({
     name: "flagRisk",
     description:
-      'Flag an account as at-risk. Adds "at-risk" tag and shows a warning card.',
+      "Flag an account as at-risk. Adds an at-risk tag and records the reason. Use when the user identifies a risk, concern, or problem with a deal.",
     parameters: [
       {
         name: "companyName",
         type: "string",
-        description: "Company name",
+        description: "The company to flag as at-risk",
+        required: true,
       },
       {
         name: "reason",
         type: "string",
-        description: "Why this account is at risk",
+        description: "The reason for flagging this account",
+        required: true,
       },
     ],
     handler: async ({
@@ -529,24 +567,27 @@ export default function App() {
   useCopilotAction({
     name: "createVisualization",
     description:
-      "Create ANY visual chart, graph, funnel, overview, scorecard, or comparison from the CRM data. Use this EVERY TIME the user asks to see, show, visualize, chart, graph, plot, or display anything. YOU compute the data items from the CRM data you can see. Supported types: funnel (tapered bars for pipeline/conversion), bar_chart (horizontal bars for comparing values), comparison (side-by-side cards for 2-4 items), scorecard (big KPI numbers), progress (percentage bars).",
+      "Render a visual chart or graph from CRM data. Use this when the user asks to see, show, visualize, chart, graph, plot, compare, or display data. You compute the data points from the CRM data you can see and choose the best chart type.",
     parameters: [
       {
         name: "type",
         type: "string",
         description:
-          "Chart type: funnel | bar_chart | comparison | scorecard | progress",
+          "Chart type: funnel, bar_chart, comparison, scorecard, or progress",
+        required: true,
       },
       {
         name: "title",
         type: "string",
-        description: "Title for the visualization",
+        description: "Title to display above the visualization",
+        required: true,
       },
       {
         name: "dataJson",
         type: "string",
         description:
-          'JSON array of data items. Each item: {"label":"Name","value":123,"color":"#hex","subtitle":"optional text"}. YOU must compute these values from the CRM data. For colors use hex codes like #6B7280 (gray), #3B82F6 (blue), #F59E0B (amber), #8B5CF6 (purple), #22C55E (green), #EF4444 (red), #E85D04 (orange).',
+          'JSON array of data items. Each item should have: {"label":"Name","value":123,"color":"#hexcolor","subtitle":"optional"}. Compute these from the CRM data. Use colors like #3B82F6 (blue), #22C55E (green), #F59E0B (amber), #EF4444 (red), #8B5CF6 (purple), #E85D04 (orange), #6B7280 (gray).',
+        required: true,
       },
     ],
     handler: async (args: {

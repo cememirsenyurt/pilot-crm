@@ -49,10 +49,35 @@ export async function POST(req: NextRequest) {
             { status: 404 },
           );
         }
-        const acct = updateAccountStage(accountId, body.stage as Stage);
+        const validStages: Stage[] = [
+          "lead",
+          "discovery",
+          "proposal",
+          "negotiation",
+          "closed_won",
+          "closed_lost",
+        ];
+        const stage = validStages.find(
+          (s) => s === String(body.stage ?? "").toLowerCase().replace(/\s+/g, "_"),
+        );
+        if (!stage) {
+          return NextResponse.json(
+            { error: true, message: `Invalid stage: ${body.stage}` },
+            { status: 400 },
+          );
+        }
+        const acct = updateAccountStage(accountId, stage);
+        const stageLabel: Record<string, string> = {
+          lead: "Lead",
+          discovery: "Discovery",
+          proposal: "Proposal",
+          negotiation: "Negotiation",
+          closed_won: "Closed Won",
+          closed_lost: "Closed Lost",
+        };
         return NextResponse.json({
           ok: true,
-          message: `✅ Moved ${acct?.company ?? "account"} to ${body.stage}`,
+          message: `✅ Moved ${acct?.company ?? "account"} to ${stageLabel[stage] ?? stage}`,
           account: acct,
         });
       }

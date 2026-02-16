@@ -19,6 +19,17 @@ import {
 
 const DATA_FILE = "/tmp/pilotcrm-data.json";
 
+// ── Valid stages ──────────────────────────────────────────────
+
+const VALID_STAGES: Stage[] = [
+  "lead",
+  "discovery",
+  "proposal",
+  "negotiation",
+  "closed_won",
+  "closed_lost",
+];
+
 // ── ID generator ──────────────────────────────────────────────
 
 let _counter = Date.now();
@@ -41,7 +52,22 @@ function loadStore(): StoreData {
     if (fs.existsSync(DATA_FILE)) {
       const raw = fs.readFileSync(DATA_FILE, "utf-8");
       const parsed = JSON.parse(raw) as StoreData;
-      if (parsed.accounts?.length) return parsed;
+      if (parsed.accounts?.length) {
+        /* Clean up any accounts with invalid stages from previous bugs */
+        for (const acct of parsed.accounts) {
+          if (!VALID_STAGES.includes(acct.stage as Stage)) {
+            console.warn(
+              `[store] Account "${acct.company}" had invalid stage "${acct.stage}", resetting to "lead"`,
+            );
+            acct.stage = "lead";
+          }
+        }
+        /* Clean up activity messages that say "→ undefined" */
+        parsed.activities = parsed.activities.filter(
+          (a) => !a.message.includes("→ undefined"),
+        );
+        return parsed;
+      }
     }
   } catch (err) {
     console.warn("[store] Failed to load from file, using seed data:", err);
@@ -165,6 +191,15 @@ export function updateAccountStage(
 ): Account | undefined {
   const account = store.accounts.find((a) => a.id === id);
   if (!account) return undefined;
+
+  /* Validate that stage is actually a known stage */
+  if (!VALID_STAGES.includes(stage)) {
+    console.warn(`[store] Invalid stage "${stage}" — ignoring`);
+    return account;
+  }
+
+  /* Don't write a no-op stage change */
+  if (account.stage === stage) return account;
 
   const oldStage = account.stage;
   account.stage = stage;
