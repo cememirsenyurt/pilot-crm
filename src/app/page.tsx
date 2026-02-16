@@ -71,8 +71,8 @@ export default function App() {
       setCalls(data.calls ?? []);
       setActivities(data.activities ?? []);
       setStats(data.stats ?? null);
-    } catch (err) {
-      console.error("Failed to fetch CRM data:", err);
+    } catch {
+      /* Fetch failed — UI will show empty state */
     } finally {
       setLoading(false);
     }

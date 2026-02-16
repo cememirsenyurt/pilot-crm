@@ -1,8 +1,7 @@
-/* ═══════════════════════════════════════════════════════════════
-   PilotCRM — In-memory mock CRM database
-   Shared across dashboard UI, CopilotKit actions, and Vapi calls.
-   All arrays are mutable so actions can write back.
-   ═══════════════════════════════════════════════════════════════ */
+/**
+ * CRM type definitions and seed data.
+ * Types are used across the app. Seed data initializes store.ts on cold start.
+ */
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -77,11 +76,6 @@ function daysFromNow(n: number): string {
   const d = new Date();
   d.setDate(d.getDate() + n);
   return d.toISOString();
-}
-
-let _nextId = 1000;
-function uid(): string {
-  return String(++_nextId);
 }
 
 // ── Accounts ────────────────────────────────────────────────
@@ -538,44 +532,7 @@ export const activities: Activity[] = [
   { id: "act-33", accountId: "acc-6", type: "stage_change", message: "Stage changed from Discovery → Proposal", timestamp: daysAgo(20) },
 ];
 
-// ═══════════════════════════════════════════════════════════════
-// Query helpers
-// ═══════════════════════════════════════════════════════════════
-
-export function getAccounts(): Account[] {
-  return accounts;
-}
-
-export function getAccount(id: string): Account | undefined {
-  return accounts.find((a) => a.id === id);
-}
-
-export function getAccountByCompany(name: string): Account | undefined {
-  const lower = name.toLowerCase();
-  return accounts.find((a) => a.company.toLowerCase().includes(lower));
-}
-
-export function getCallsByAccount(accountId: string): CallRecord[] {
-  return callRecords.filter((c) => c.accountId === accountId);
-}
-
-export function getAllCalls(): CallRecord[] {
-  return callRecords;
-}
-
-export function getActivitiesByAccount(accountId: string): Activity[] {
-  return activities
-    .filter((a) => a.accountId === accountId)
-    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-}
-
-export function getRecentActivities(limit: number = 10): Activity[] {
-  return [...activities]
-    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-    .slice(0, limit);
-}
-
-// ── Pipeline stats ──────────────────────────────────────────
+// ── Pipeline stats type (used by store.ts and components) ───
 
 export interface PipelineStats {
   totalPipelineValue: number;
@@ -588,189 +545,7 @@ export interface PipelineStats {
   valueByStage: Record<Stage, number>;
 }
 
-export function getPipelineStats(): PipelineStats {
-  const stages: Stage[] = [
-    "lead",
-    "discovery",
-    "proposal",
-    "negotiation",
-    "closed_won",
-    "closed_lost",
-  ];
-
-  const countByStage = Object.fromEntries(
-    stages.map((s) => [s, accounts.filter((a) => a.stage === s).length])
-  ) as Record<Stage, number>;
-
-  const valueByStage = Object.fromEntries(
-    stages.map((s) => [
-      s,
-      accounts.filter((a) => a.stage === s).reduce((sum, a) => sum + a.dealValue, 0),
-    ])
-  ) as Record<Stage, number>;
-
-  const active = accounts.filter(
-    (a) => a.stage !== "closed_won" && a.stage !== "closed_lost"
-  );
-
-  const totalPipelineValue = active.reduce((s, a) => s + a.dealValue, 0);
-  const weightedPipelineValue = active.reduce(
-    (s, a) => s + a.dealValue * (a.likelihood / 100),
-    0
-  );
-
-  return {
-    totalPipelineValue,
-    weightedPipelineValue,
-    averageDealSize:
-      accounts.length > 0
-        ? accounts.reduce((s, a) => s + a.dealValue, 0) / accounts.length
-        : 0,
-    averageLikelihood:
-      active.length > 0
-        ? active.reduce((s, a) => s + a.likelihood, 0) / active.length
-        : 0,
-    totalAccounts: accounts.length,
-    activeDeals: active.length,
-    countByStage,
-    valueByStage,
-  };
-}
-
-// ═══════════════════════════════════════════════════════════════
-// Mutation helpers
-// ═══════════════════════════════════════════════════════════════
-
-export function updateAccountStage(id: string, stage: Stage): Account | undefined {
-  const account = accounts.find((a) => a.id === id);
-  if (!account) return undefined;
-
-  const oldStage = account.stage;
-  account.stage = stage;
-
-  activities.push({
-    id: uid(),
-    accountId: id,
-    type: "stage_change",
-    message: `Stage changed from ${formatStage(oldStage)} → ${formatStage(stage)}`,
-    timestamp: new Date().toISOString(),
-  });
-
-  return account;
-}
-
-export function updateAccountLikelihood(
-  id: string,
-  likelihood: number
-): Account | undefined {
-  const account = accounts.find((a) => a.id === id);
-  if (!account) return undefined;
-  account.likelihood = Math.max(0, Math.min(100, likelihood));
-  return account;
-}
-
-export function addNoteToAccount(id: string, note: string): Account | undefined {
-  const account = accounts.find((a) => a.id === id);
-  if (!account) return undefined;
-
-  account.notes.push(note);
-
-  activities.push({
-    id: uid(),
-    accountId: id,
-    type: "note",
-    message: note,
-    timestamp: new Date().toISOString(),
-  });
-
-  return account;
-}
-
-export function addCallRecord(
-  accountId: string,
-  record: Omit<CallRecord, "id">
-): CallRecord {
-  const newRecord: CallRecord = { ...record, id: uid() };
-  callRecords.push(newRecord);
-
-  const account = accounts.find((a) => a.id === accountId);
-  if (account) {
-    account.lastContactDate = record.date;
-  }
-
-  activities.push({
-    id: uid(),
-    accountId,
-    type: "call",
-    message: `Call recorded — ${record.outcome} (${Math.round(record.duration / 60)} min)`,
-    timestamp: record.date,
-  });
-
-  return newRecord;
-}
-
-export function addActivity(activity: Omit<Activity, "id">): Activity {
-  const newActivity: Activity = { ...activity, id: uid() };
-  activities.push(newActivity);
-  return newActivity;
-}
-
-/** Create a brand-new account from an inbound lead (phone call) */
-export function createAccount(data: {
-  company: string;
-  contactName: string;
-  contactEmail: string;
-  contactRole: string;
-  industry: string;
-  dealValue: number;
-  notes: string[];
-}): Account {
-  const newAccount: Account = {
-    id: uid(),
-    company: data.company,
-    contactName: data.contactName,
-    contactEmail: data.contactEmail,
-    contactRole: data.contactRole,
-    plan: "free",
-    stage: "lead",
-    dealValue: data.dealValue,
-    likelihood: 25,
-    industry: data.industry,
-    notes: data.notes,
-    lastContactDate: new Date().toISOString(),
-    nextFollowUp: new Date(Date.now() + 3 * 86_400_000)
-      .toISOString()
-      .split("T")[0],
-    tags: ["inbound"],
-  };
-  accounts.push(newAccount);
-
-  activities.push({
-    id: uid(),
-    accountId: newAccount.id,
-    type: "note",
-    message: `New inbound lead: ${data.company} — ${data.contactName} (${data.contactRole})`,
-    timestamp: new Date().toISOString(),
-  });
-
-  return newAccount;
-}
-
-// ── Formatting ──────────────────────────────────────────────
-
-function formatStage(stage: Stage): string {
-  const labels: Record<Stage, string> = {
-    lead: "Lead",
-    discovery: "Discovery",
-    proposal: "Proposal",
-    negotiation: "Negotiation",
-    closed_won: "Closed Won",
-    closed_lost: "Closed Lost",
-  };
-  return labels[stage] ?? stage;
-}
-
-// ── Seed data exports (for server-side store.ts) ────────────
+// ── Seed data exports (used by store.ts on cold start) ──────
 
 export { accounts as SEED_ACCOUNTS };
 export { callRecords as SEED_CALL_RECORDS };

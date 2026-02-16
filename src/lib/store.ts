@@ -56,9 +56,6 @@ function loadStore(): StoreData {
         /* Clean up any accounts with invalid stages from previous bugs */
         for (const acct of parsed.accounts) {
           if (!VALID_STAGES.includes(acct.stage as Stage)) {
-            console.warn(
-              `[store] Account "${acct.company}" had invalid stage "${acct.stage}", resetting to "lead"`,
-            );
             acct.stage = "lead";
           }
         }
@@ -197,11 +194,7 @@ export function updateAccountStage(
   const account = store.accounts.find((a) => a.id === id);
   if (!account) return undefined;
 
-  /* Validate that stage is actually a known stage */
-  if (!VALID_STAGES.includes(stage)) {
-    console.warn(`[store] Invalid stage "${stage}" — ignoring`);
-    return account;
-  }
+  if (!VALID_STAGES.includes(stage)) return account;
 
   /* Don't write a no-op stage change */
   if (account.stage === stage) return account;

@@ -119,7 +119,6 @@ async function handleEndOfCallReport(message: Record<string, unknown>) {
   const durationSeconds = Number(message.duration ?? 0);
 
   if (!transcript || transcript.length < 20) {
-    console.log("[Vapi] Call ended with minimal transcript, skipping.");
     return NextResponse.json({ ok: true });
   }
 
@@ -142,9 +141,6 @@ async function handleEndOfCallReport(message: Record<string, unknown>) {
         sentiment: null,
         outcome: summary,
       });
-      console.log(
-        `[Vapi] Inbound call matched existing account: ${account.company}`,
-      );
       matchedExisting = true;
       break;
     }
@@ -236,10 +232,6 @@ Return ONLY valid JSON with this structure:
     sentiment: null,
     outcome: summary,
   });
-
-  console.log(
-    `[Vapi] New inbound lead created: ${leadInfo.company} — ${leadInfo.contactName}`,
-  );
 
   return NextResponse.json({
     ok: true,

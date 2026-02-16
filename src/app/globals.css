@@ -1,17 +1,14 @@
 @import "tailwindcss";
 
-/* ── CopilotKit overrides ──────────────────────────────────── */
-
+/* Hide CopilotKit branding badge that covers the close button */
 .copilotKitBadge,
 [class*="powered-by"],
-[class*="badge"],
 [class*="PoweredBy"],
 [class*="copilotkit-badge"] {
   display: none !important;
 }
 
-/* ── Scrollbar ─────────────────────────────────────────────── */
-
+/* Thin scrollbar for overflow containers */
 .scroll-thin::-webkit-scrollbar {
   height: 6px;
   width: 6px;
@@ -27,19 +24,11 @@
   background: #9ca3af;
 }
 
-/* ── Pulse ring for floating call button ───────────────────── */
-
+/* Pulse animation for the floating call button */
 @keyframes pulse-ring {
-  0% {
-    transform: scale(1);
-    opacity: 0.6;
-  }
-  100% {
-    transform: scale(1.8);
-    opacity: 0;
-  }
+  0% { transform: scale(1); opacity: 0.6; }
+  100% { transform: scale(1.8); opacity: 0; }
 }
-
 .call-pulse::before {
   content: "";
   position: absolute;
