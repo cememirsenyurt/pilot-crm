@@ -87,6 +87,11 @@ function persist(): void {
   }
 }
 
+/** Allow API routes to persist after direct object mutations (e.g. tag edits) */
+export function persistFromRoute(): void {
+  persist();
+}
+
 // ── Initialize ────────────────────────────────────────────────
 
 const store: StoreData = loadStore();

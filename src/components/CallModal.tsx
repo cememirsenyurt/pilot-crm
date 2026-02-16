@@ -232,8 +232,11 @@ export function CallModal({
 
   /* ── Save ────────────────────────────────────────────────── */
 
-  const handleSave = () => {
-    if (!account) return;
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    if (!account || saving) return;
+    setSaving(true);
 
     const full = transcript
       .map(
@@ -242,37 +245,45 @@ export function CallModal({
       )
       .join("\n");
 
-    onCallComplete(accountId, {
-      accountId,
-      date: new Date().toISOString(),
-      duration: elapsed,
-      transcript: full || "(No transcript recorded)",
-      sentiment: sentiment
-        ? {
-            score: sentiment.overallSentiment,
-            satisfaction: sentiment.customerSatisfaction,
-            summary: sentiment.summary,
-            tags: [
-              ...sentiment.painPoints.slice(0, 2).map(() => "pain-point"),
-              ...sentiment.positiveSignals
-                .slice(0, 2)
-                .map(() => "positive-signal"),
-            ],
-          }
-        : null,
-      outcome: sentiment?.summary ?? "Call completed",
-      _analysis: sentiment
-        ? {
-            likelihoodToClose: sentiment.likelihoodToClose,
-            overallSentiment: sentiment.overallSentiment,
-            painPoints: sentiment.painPoints,
-            positiveSignals: sentiment.positiveSignals,
-            nextSteps: sentiment.nextSteps,
-          }
-        : null,
-    } as Omit<CallRecord, "id"> & { _analysis?: Record<string, unknown> });
-
-    onClose();
+    try {
+      await onCallComplete(accountId, {
+        accountId,
+        date: new Date().toISOString(),
+        duration: elapsed,
+        transcript: full || "(No transcript recorded)",
+        sentiment: sentiment
+          ? {
+              score: sentiment.overallSentiment,
+              satisfaction: sentiment.customerSatisfaction,
+              summary: sentiment.summary,
+              tags: [
+                ...sentiment.painPoints.slice(0, 2).map(() => "pain-point"),
+                ...sentiment.positiveSignals
+                  .slice(0, 2)
+                  .map(() => "positive-signal"),
+              ],
+            }
+          : null,
+        outcome: sentiment?.summary ?? "Call completed",
+        _analysis: sentiment
+          ? {
+              likelihoodToClose: sentiment.likelihoodToClose,
+              overallSentiment: sentiment.overallSentiment,
+              customerSatisfaction: sentiment.customerSatisfaction,
+              painPoints: sentiment.painPoints,
+              positiveSignals: sentiment.positiveSignals,
+              objectionsRaised: sentiment.objectionsRaised,
+              nextSteps: sentiment.nextSteps,
+              summary: sentiment.summary,
+            }
+          : null,
+      } as Omit<CallRecord, "id"> & { _analysis?: Record<string, unknown> });
+    } catch (err) {
+      console.error("Failed to save call:", err);
+    } finally {
+      setSaving(false);
+      onClose();
+    }
   };
 
   /* ── Export JSON ──────────────────────────────────────────── */
@@ -589,9 +600,10 @@ export function CallModal({
                 <div className="flex gap-3 pt-2">
                   <button
                     onClick={handleSave}
-                    className="flex-1 rounded-lg bg-[#E85D04] py-2.5 text-sm font-semibold text-white hover:bg-[#D04D00] transition-colors"
+                    disabled={saving}
+                    className="flex-1 rounded-lg bg-[#E85D04] py-2.5 text-sm font-semibold text-white hover:bg-[#D04D00] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    Save & Close
+                    {saving ? "Saving..." : "Save & Close"}
                   </button>
                   <button
                     onClick={handleExport}

@@ -14,6 +14,7 @@ import {
   addCallRecord,
   createAccount,
   flagAccountRisk,
+  persistFromRoute,
 } from "@/lib/store";
 import type { Stage } from "@/lib/data";
 
@@ -149,20 +150,24 @@ export async function POST(req: NextRequest) {
 
         const acct = getAccount(body.accountId);
         const analysis = body.analysis;
-        const sentimentScore = analysis?.overallSentiment ?? body.sentiment?.score ?? null;
+        const sentimentScore =
+          analysis?.overallSentiment ?? body.sentiment?.score ?? null;
         const likelihoodFromCall = analysis?.likelihoodToClose ?? null;
 
-        if (acct && acct.stage !== "closed_won" && acct.stage !== "closed_lost") {
-          /* ── Update likelihood based on call analysis ──────── */
+        if (
+          acct &&
+          acct.stage !== "closed_won" &&
+          acct.stage !== "closed_lost"
+        ) {
+          /* ── 1. Update likelihood based on call analysis ───── */
           if (typeof likelihoodFromCall === "number") {
-            /* Weight the call analysis heavily — 70% new, 30% old */
             const newLikelihood = Math.round(
               acct.likelihood * 0.3 + likelihoodFromCall * 0.7,
             );
             updateAccountLikelihood(acct.id, newLikelihood);
           }
 
-          /* ── Auto-adjust pipeline stage based on sentiment ── */
+          /* ── 2. Auto-adjust pipeline stage based on sentiment  */
           const stageOrder: Stage[] = [
             "lead",
             "discovery",
@@ -172,26 +177,93 @@ export async function POST(req: NextRequest) {
           const currentIdx = stageOrder.indexOf(acct.stage as Stage);
 
           if (typeof sentimentScore === "number" && currentIdx >= 0) {
-            /* Bad call (sentiment < 4): move back one stage */
             if (sentimentScore <= 3 && currentIdx > 0) {
-              const newStage = stageOrder[currentIdx - 1];
-              updateAccountStage(acct.id, newStage);
+              updateAccountStage(acct.id, stageOrder[currentIdx - 1]);
             }
-            /* Very bad call (sentiment < 3): also flag as at-risk */
             if (sentimentScore <= 3) {
               flagAccountRisk(
                 acct.id,
                 `Negative call — sentiment ${sentimentScore}/10: ${body.outcome ?? "poor engagement"}`,
               );
             }
-            /* Great call (sentiment >= 8): advance one stage */
             if (sentimentScore >= 8 && currentIdx < stageOrder.length - 1) {
-              const newStage = stageOrder[currentIdx + 1];
-              updateAccountStage(acct.id, newStage);
+              updateAccountStage(acct.id, stageOrder[currentIdx + 1]);
             }
           }
 
-          /* If likelihood dropped below 30, flag at-risk */
+          /* ── 3. Add call summary as a note ─────────────────── */
+          const summary = analysis?.summary ?? body.outcome;
+          if (summary) {
+            const noteLines = [`📞 Call summary: ${summary}`];
+            const nextSteps = analysis?.nextSteps;
+            if (Array.isArray(nextSteps) && nextSteps.length > 0) {
+              noteLines.push(
+                `Next steps: ${nextSteps.slice(0, 3).join("; ")}`,
+              );
+            }
+            addNoteToAccount(acct.id, noteLines.join(" | "));
+          }
+
+          /* ── 4. Update tags based on call analysis ─────────── */
+          const tagsToAdd: string[] = [];
+          const tagsToRemove: string[] = [];
+
+          if (typeof sentimentScore === "number") {
+            if (sentimentScore >= 8) {
+              tagsToAdd.push("engaged");
+              tagsToRemove.push("at-risk");
+            } else if (sentimentScore <= 3) {
+              tagsToAdd.push("at-risk");
+              tagsToRemove.push("engaged");
+            }
+          }
+
+          if (typeof likelihoodFromCall === "number") {
+            if (likelihoodFromCall >= 75) {
+              tagsToAdd.push("high-priority");
+            }
+          }
+
+          const painPoints = analysis?.painPoints;
+          if (Array.isArray(painPoints) && painPoints.length > 0) {
+            const painText = painPoints.join(" ").toLowerCase();
+            if (painText.includes("budget") || painText.includes("price") || painText.includes("cost")) {
+              tagsToAdd.push("budget-concern");
+            }
+            if (painText.includes("compliance") || painText.includes("security") || painText.includes("legal")) {
+              tagsToAdd.push("compliance-blocker");
+            }
+            if (painText.includes("timeline") || painText.includes("deadline") || painText.includes("urgent")) {
+              tagsToAdd.push("urgent-timeline");
+            }
+          }
+
+          /* Apply tag changes */
+          for (const tag of tagsToAdd) {
+            if (!acct.tags.includes(tag)) {
+              acct.tags.push(tag);
+            }
+          }
+          for (const tag of tagsToRemove) {
+            const idx = acct.tags.indexOf(tag);
+            if (idx >= 0) acct.tags.splice(idx, 1);
+          }
+
+          /* ── 5. Set next follow-up based on call ───────────── */
+          const nextSteps = analysis?.nextSteps;
+          if (Array.isArray(nextSteps) && nextSteps.length > 0) {
+            const followUpDays =
+              typeof sentimentScore === "number" && sentimentScore >= 7
+                ? 2
+                : 5;
+            acct.nextFollowUp = new Date(
+              Date.now() + followUpDays * 86_400_000,
+            )
+              .toISOString()
+              .split("T")[0];
+          }
+
+          /* ── 6. If likelihood dropped below 30, flag at-risk  */
           const refreshedAcct = getAccount(body.accountId);
           if (
             refreshedAcct &&
@@ -203,6 +275,9 @@ export async function POST(req: NextRequest) {
               `Likelihood dropped to ${refreshedAcct.likelihood}% after call`,
             );
           }
+
+          /* Persist all tag/follow-up changes */
+          persistFromRoute();
         }
 
         return NextResponse.json({ ok: true, callId: record.id });
