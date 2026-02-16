@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: pilot-crm
+    runtime: node
+    repo: https://github.com/cememirsenyurt/pilot-crm
+    branch: main
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    plan: free
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: NEXT_PUBLIC_VAPI_PUBLIC_KEY
+        sync: false
+      - key: NEXT_PUBLIC_VAPI_ASSISTANT_ID
+        sync: false
+      - key: VAPI_API_KEY
+        sync: false
+      - key: NODE_ENV
+        value: production
