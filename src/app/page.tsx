@@ -185,10 +185,18 @@ export default function App() {
 
   /* ── 1. Move Account to Stage ────────────────────────────── */
 
+  const [pendingApproval, setPendingApproval] = useState<{
+    accountId: string;
+    company: string;
+    dealValue: number;
+    contactName: string;
+    likelihood: number;
+  } | null>(null);
+
   useCopilotAction({
     name: "moveAccountToStage",
     description:
-      "Move a deal to a different pipeline stage. Use when the user asks to move, advance, or regress a deal. For closed_won requires user approval.",
+      "Move a deal to a different pipeline stage. Use when the user asks to move, advance, or regress a deal. For closed_won, returns a pending approval that the user must confirm in the UI.",
     parameters: [
       {
         name: "companyName",
@@ -204,27 +212,13 @@ export default function App() {
         required: true,
       },
     ],
-    renderAndWait: ({ args, handler }) => {
-      const name = String(args.companyName ?? "").toLowerCase();
-      const acct = accounts.find(
-        (a) =>
-          a.company.toLowerCase() === name ||
-          a.company.toLowerCase().includes(name),
-      );
-      if (!acct) {
-        return (
-          <RenderCard variant="error">
-            Account &quot;{String(args.companyName)}&quot; not found.
-            <button
-              onClick={() => handler?.("Account not found.")}
-              className="mt-2 w-full rounded-lg bg-gray-100 py-1.5 text-xs font-medium"
-            >
-              Dismiss
-            </button>
-          </RenderCard>
-        );
-      }
-
+    handler: async ({
+      companyName,
+      newStage,
+    }: {
+      companyName: string;
+      newStage: string;
+    }) => {
       const validStages: Stage[] = [
         "lead",
         "discovery",
@@ -233,57 +227,90 @@ export default function App() {
         "closed_won",
         "closed_lost",
       ];
-      const rawStage = String(args.newStage ?? "").toLowerCase().replace(/\s+/g, "_");
+      const rawStage = String(newStage ?? "")
+        .toLowerCase()
+        .replace(/\s+/g, "_");
       const stage = validStages.find((s) => s === rawStage) ?? null;
 
       if (!stage) {
-        return (
-          <RenderCard variant="error">
-            Invalid stage &quot;{String(args.newStage)}&quot;. Valid stages: Lead, Discovery, Proposal, Negotiation, Closed Won, Closed Lost.
-            <button
-              onClick={() => handler?.(`Invalid stage "${args.newStage}".`)}
-              className="mt-2 w-full rounded-lg bg-gray-100 py-1.5 text-xs font-medium"
-            >
-              Dismiss
-            </button>
-          </RenderCard>
-        );
+        return {
+          error: true,
+          message: `Invalid stage "${newStage}". Valid: lead, discovery, proposal, negotiation, closed_won, closed_lost.`,
+        };
+      }
+
+      const name = String(companyName ?? "").toLowerCase();
+      const acct = accounts.find(
+        (a) =>
+          a.company.toLowerCase() === name ||
+          a.company.toLowerCase().includes(name),
+      );
+      if (!acct) {
+        return { error: true, message: `Account "${companyName}" not found.` };
       }
 
       if (stage === "closed_won") {
+        setPendingApproval({
+          accountId: acct.id,
+          company: acct.company,
+          dealValue: acct.dealValue,
+          contactName: acct.contactName,
+          likelihood: acct.likelihood,
+        });
+        return {
+          needsApproval: true,
+          company: acct.company,
+          stage: "closed_won",
+          stageLabel: "Closed Won",
+        };
+      }
+
+      const result = await mutate("moveStage", {
+        accountId: acct.id,
+        stage,
+      });
+      return {
+        ok: true,
+        company: acct.company,
+        from: stageLabels[acct.stage] ?? acct.stage,
+        stage,
+        stageLabel: stageLabels[stage] ?? stage,
+        message: result.message,
+      };
+    },
+    render: ({ status, result }) => {
+      if (status === "inProgress")
+        return <RenderCard>Moving deal...</RenderCard>;
+
+      if (result?.error)
+        return <RenderCard variant="error">{result.message}</RenderCard>;
+
+      if (result?.needsApproval) {
         return (
           <RenderCard variant="warning">
             <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-amber-600">
               Approval Required
             </p>
             <p className="text-sm font-medium text-gray-900">
-              Close <strong>{acct.company}</strong> as Won?
-            </p>
-            <p className="mt-1 text-xs text-gray-500">
-              ${acct.dealValue.toLocaleString()} • {acct.contactName} •{" "}
-              {acct.likelihood}% likelihood
+              Close <strong>{result.company}</strong> as Won?
             </p>
             <div className="mt-3 flex gap-2">
               <button
                 onClick={async () => {
-                  await mutate("moveStage", {
-                    accountId: acct.id,
-                    stage: "closed_won",
-                  });
-                  handler?.(
-                    `✅ Approved! ${acct.company} marked as Closed Won.`,
-                  );
+                  if (pendingApproval) {
+                    await mutate("moveStage", {
+                      accountId: pendingApproval.accountId,
+                      stage: "closed_won",
+                    });
+                    setPendingApproval(null);
+                  }
                 }}
                 className="flex-1 rounded-lg bg-green-600 py-1.5 text-xs font-semibold text-white hover:bg-green-700 transition-colors"
               >
                 Approve & Close
               </button>
               <button
-                onClick={() =>
-                  handler?.(
-                    `❌ Declined. ${acct.company} stays in ${stageLabels[acct.stage] ?? acct.stage}.`,
-                  )
-                }
+                onClick={() => setPendingApproval(null)}
                 className="flex-1 rounded-lg bg-gray-100 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-200 transition-colors"
               >
                 Decline
@@ -293,19 +320,15 @@ export default function App() {
         );
       }
 
-      /* Non-closed_won — auto-execute */
       return (
-        <AutoMoveCard
-          account={acct}
-          stage={stage}
-          handler={handler!}
-          onExecute={async () => {
-            await mutate("moveStage", {
-              accountId: acct.id,
-              stage,
-            });
-          }}
-        />
+        <RenderCard>
+          <div className="flex items-center gap-2">
+            <span className="text-green-600">✅</span>
+            <span className="text-sm font-medium text-gray-900">
+              {result?.company ?? "Account"} → {result?.stageLabel ?? "updated"}
+            </span>
+          </div>
+        </RenderCard>
       );
     },
   });
@@ -1015,40 +1038,3 @@ function ProgressViz({ title, items }: VizProps) {
   );
 }
 
-/* ── Auto-move helper ──────────────────────────────────────── */
-
-function AutoMoveCard({
-  account,
-  stage,
-  handler,
-  onExecute,
-}: {
-  account: Account;
-  stage: string;
-  handler: (msg: string) => void;
-  onExecute: () => Promise<void>;
-}) {
-  const executed = useRef(false);
-  useEffect(() => {
-    if (!executed.current) {
-      executed.current = true;
-      onExecute().then(() => {
-        handler(
-          `✅ Moved ${account.company} to ${stageLabels[stage] ?? stage}.`,
-        );
-      });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  return (
-    <RenderCard>
-      <div className="flex items-center gap-2">
-        <span className="text-green-600">✅</span>
-        <span className="text-sm font-medium text-gray-900">
-          {account.company} → {stageLabels[stage] ?? stage}
-        </span>
-      </div>
-    </RenderCard>
-  );
-}
